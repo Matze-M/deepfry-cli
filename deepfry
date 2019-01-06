@@ -1,0 +1,232 @@
+#!/bin/bash
+
+#-----------------------------------------------------------------------
+#  HEADER
+#-----------------------------------------------------------------------
+#% 
+#% USAGE
+#%      ${SCRIPT_NAME} [OPTIONS] COMMAND 
+#% 
+#% OPTIONS
+#%      -h, --help      show this help
+#% 
+#% COMMANDS
+#%      clone           clone .fry image
+#%      flash           flash .fry image
+#%      help            show this help
+#% 
+#-----------------------------------------------------------------------
+#  END OF HEADER
+#-----------------------------------------------------------------------
+
+SCRIPT_HEADER_SIZE=$( head -200 ${0} \
+                    |grep -n "^#  END OF HEADER" | cut -f1 -d:)
+SCRIPT_NAME="$(basename ${BASH_SOURCE[0]})"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+CHIP_ADDR=192.168.81.1
+CHIP_PORT=8080
+CHIP_URL="$CHIP_ADDR:$CHIP_PORT"
+
+function deepfry-clone() {
+
+    case "$1" in
+        "" | "-h" | "--help")
+            echo "USAGE"
+            echo "    ${SCRIPT_NAME} clone <FILENAME>"
+            exit 1
+            ;;
+        *)
+            FILENAME=$1
+            ;;
+    esac
+
+    IMAGES=buildroot/output/images
+    IMAGES="$(realpath $IMAGES)"
+
+    TMPDIR="$(mktemp -d ${SCRIPT_NAME}.XXXXXX)"
+#    TMPDIR=deepfry.XwaLqT
+    
+    echo "Downloadig U-Boot and Linux initrd image"
+    sunxi-fel -p uboot $IMAGES/u-boot-sunxi-with-spl.bin \
+        write 0x43300000 $IMAGES/rootfs.cpio.uboot \
+        write 0x43000000 $IMAGES/sun5i-r8-chip.dtb \
+        write 0x42000000 $IMAGES/zImage \
+        write 0x43100000 $IMAGES/boot.scr.bin \
+        || exit $?
+    
+    echo -n "Waiting for network device to show up..."
+    while ! ping -c 1 -w 1 ${CHIP_ADDR} >/dev/null; do echo -n "."; sleep 1; done
+    echo "done"
+    
+    sleep 1
+    curl ${CHIP_URL}/info >${TMPDIR}/info.json
+    
+    echo "-- Download SPL --"
+    echo "Read SPL from /dev/mtd0"
+    curl -X POST --data "cmd=/usr/sbin/nanddump -a -o -n /dev/mtd0"  ${CHIP_URL}/run >${TMPDIR}/mtd0
+    echo "Read SPL from /dev/mtd1"
+    curl -X POST --data "cmd=/usr/sbin/nanddump -a -o -n /dev/mtd1"  ${CHIP_URL}/run >${TMPDIR}/mtd1
+    
+    echo "-- Download U-Boot --"
+    echo "Read U-Boot from /dev/mtd2"
+    curl -X POST --data "cmd=/usr/sbin/nanddump -a /dev/mtd2" ${CHIP_URL}/run >${TMPDIR}/mtd2
+    
+    echo "-- Download U-Boot Environment --"
+    echo "Read U-Boot Environment from /dev/mtd3"
+    curl -X POST --data "cmd=/usr/sbin/nanddump -a /dev/mtd3" ${CHIP_URL}/run >${TMPDIR}/mtd3
+    
+    sleep 1
+    echo "Downloading rootfs..."
+    curl ${CHIP_URL}/backup >${TMPDIR}/rootfs.tar
+
+    NAND_OOB_SIZE="$(cat $TMPDIR/info.json |jq '.[].OobSize'|head -n1)"
+    echo "TODO: find better solution here - what about NAND on CHIP PRO?"
+    if [ "${NAND_OOB_SIZE}" == "1664" ]; then
+        RAW_NAND_TYPE=RAW_NAND_HYNIX
+    else
+        RAW_NAND_TYPE=RAW_NAND_TOSHIBA
+    fi
+
+    echo -e "[info]\ndescription=Created with deepfry-cli\nfry_version=0" >${TMPDIR}/manifest.ini
+    echo -e "[mtd0]\ndestination=/dev/mtd0\nfile=mtd0\ntype=${RAW_NAND_TYPE}\n" >>${TMPDIR}/manifest.ini
+    echo -e "[mtd1]\ndestination=/dev/mtd1\nfile=mtd1\ntype=${RAW_NAND_TYPE}\n" >>${TMPDIR}/manifest.ini
+    echo -e "[mtd2]\ndestination=/dev/mtd2\nfile=mtd2\ntype=NAND\n" >>${TMPDIR}/manifest.ini
+    echo -e "[mtd3]\ndestination=/dev/mtd3\nfile=mtd3\ntype=NAND\n" >>${TMPDIR}/manifest.ini
+    echo -e "[rootfs]\ndestination=/dev/ubi0_0\nfile=rootfs.tar\ntype=UBIFS_TAR\n" >>${TMPDIR}/manifest.ini
+
+    echo -e "[\n" >${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd0\",\n\"file\": \"mtd0\",\n\"type\": \"${RAW_NAND_TYPE}\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd1\",\n\"file\": \"mtd1\",\n\"type\": \"${RAW_NAND_TYPE}\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd2\",\n\"file\": \"mtd2\",\n\"type\": \"NAND\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd3\",\n\"file\": \"mtd3\",\n\"type\": \"NAND\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/ubi0_0\",\n\"file\": \"rootfs.tar\",\n\"type\": \"UBIFS_TAR\"\n}\n" >>${TMPDIR}/manifest.json
+    echo -e "]\n" >>${TMPDIR}/manifest.json
+
+    echo "-- Writing .fry file --"
+    time zip -2 -j "${FILENAME}" "${TMPDIR}"/*
+
+    rm -rf "${TMPDIR}"
+}
+
+function deepfry-flash() {
+    case "$1" in
+        "" | "-h" | "--help")
+            echo "USAGE"
+            echo "    ${SCRIPT_NAME} flash <FILENAME>"
+            exit 1
+            ;;
+        *)
+            FILENAME="$(realpath "$1")"
+            ;;
+    esac
+
+    set -x
+    echo "FILENAME=$FILENAME"
+    IMAGES=buildroot/output/images
+    IMAGES="$(realpath $IMAGES)"
+
+    TMPDIR="$(mktemp -d ${SCRIPT_NAME}.XXXXXX)"
+    TMPDIR="$(realpath ${TMPDIR})"
+    pushd "${TMPDIR}" && \
+    unzip "${FILENAME}" && \
+ 
+    #TMPDIR=deepfry.XwaLqT
+
+    sunxi-fel -p uboot   $IMAGES/u-boot-sunxi-with-spl.bin \
+        write 0x43300000 $IMAGES/rootfs.cpio.uboot \
+        write 0x43000000 $IMAGES/sun5i-r8-chip.dtb \
+        write 0x42000000 $IMAGES/zImage \
+        write 0x43100000 $IMAGES/boot.scr.bin 
+
+    echo -n "waiting for network device to show up..."
+    while ! ping -c 1 -w 1 ${CHIP_ADDR} >/dev/null; do echo -n "."; done
+    echo "done"
+
+    sleep 1
+    NAND_OOB_SIZE="$(curl ${CHIP_URL}/info |jq '.[].OobSize'|head -n1)"
+    echo "TODO: find better solution here - what about NAND on CHIP PRO?"
+    if [ "${NAND_OOB_SIZE}" == "1664" ]; then
+        RAW_NAND_TYPE=RAW_NAND_HYNIX
+    else
+        RAW_NAND_TYPE=RAW_NAND_TOSHIBA
+    fi
+
+    echo flash
+    jq -r '.[] | .destination+" "+.file+" "+.type' <${TMPDIR}/manifest.json \
+        | while read dest file type; do
+            echo d=$dest file=$file t=$type
+            case "$type" in
+                'RAW_NAND_HYNIX' | 'RAW_NAND_TOSHIBA')
+                    if [[ "${RAW_NAND_TYPE}" == "${type}" ]]; then
+                        echo "Write raw NAND image to $dest"
+                        curl -T "${TMPDIR}/${file}" ${CHIP_URL}/file/tmp/${file}
+                        curl -X POST --data "cmd=/usr/sbin/flash_erase ${dest} 0 1" ${CHIP_URL}/run
+                        curl -X POST --data "cmd=/usr/sbin/nandwrite -o -n ${dest} /tmp/${file}" ${CHIP_URL}/run
+                    else
+                        echo "Skipping incompatible $t image - your CHIP has ${RAW_NAND_TYPE}"
+                    fi
+                    ;;
+                'NAND')
+                    echo "Write NAND image to $dest"
+                    curl -T "${TMPDIR}/${file}" ${CHIP_URL}/file/tmp/${file}
+                    curl -X POST --data "cmd=/usr/sbin/flash_erase ${dest} 0 1" ${CHIP_URL}/run
+                    curl -X POST --data "cmd=/usr/sbin/nandwrite ${dest} /tmp/${file}" ${CHIP_URL}/run
+                    ;;
+                'UBIFS_TAR')
+                    curl -T "${TMPDIR}/${file}" ${CHIP_URL}/restore
+                    ;;
+                *)
+                    echo "unknown type: $type"
+                    ;;
+            esac
+    done
+
+    popd
+
+#    echo "-- Upload SPL --"
+#    echo "Write SPL to /dev/mtd0"
+#    curl -T spl_mtd0 ${CHIP_URL}/file/tmp/spl_mtd0
+#    curl -X POST --data "cmd=/usr/sbin/flash_erase /dev/mtd0 0 1" ${CHIP_URL}/run
+#    curl -X POST --data "cmd=/usr/sbin/nandwrite -o -n /dev/mtd0 /tmp/spl_mtd0" ${CHIP_URL}/run
+#    echo "Write SPL to /dev/mtd1"
+#    curl -T spl_mtd1 ${CHIP_URL}/file/tmp/spl_mtd1
+#    curl -X POST --data "cmd=/usr/sbin/flash_erase /dev/mtd1 0 1" ${CHIP_URL}/run
+#    curl -X POST --data "cmd=/usr/sbin/nandwrite -o -n /dev/mtd1 /tmp/spl_mtd1" ${CHIP_URL}/run
+#
+#    echo "-- Upload U-Boot --"
+#    curl -T uboot_mtd2 ${CHIP_URL}/file/tmp/mtd2
+#    echo "Write U-Boot to /dev/mtd2"
+#    curl -X POST --data "cmd=/usr/sbin/flash_erase /dev/mtd2 0 1" ${CHIP_URL}/run
+#    curl -X POST --data "cmd=/usr/sbin/nandwrite /dev/mtd2 /tmp/mtd2" ${CHIP_URL}/run
+#
+#    echo "-- Upload U-Boot Environment --"
+#    curl -T uboot_env_mtd3 ${CHIP_URL}/file/tmp/mtd3
+#    echo "Write U-Boot Environment to /dev/mtd3"
+#    curl -X POST --data "cmd=/usr/sbin/flash_erase /dev/mtd3 0 1" ${CHIP_URL}/run
+#    curl -X POST --data "cmd=/usr/sbin/nandwrite /dev/mtd3 /tmp/mtd3" ${CHIP_URL}/run
+#
+#    echo "writing Rootfs"
+#    curl -T rootfs.tar ${CHIP_URL}/restore
+}
+
+function deepfry-help() {
+    head -${SCRIPT_HEADER_SIZE:-99} ${0} \
+        | grep -e "^#%" \
+        | sed -e "s/^#% //g" -e "s/\${SCRIPT_NAME}/${SCRIPT_NAME}/g";
+}
+
+cmd=$1
+case $cmd in
+    "" | "-h" | "--help")
+        deepfry-help
+        ;;
+    *)
+        shift
+        deepfry-${cmd} $@
+        if [ $? = 127 ]; then
+            echo "ERROR: '$cmd' is not a known command. Run '${SCRIPT_NAME} --help'." >&2
+            exit 1
+        fi
+        ;;
+esac

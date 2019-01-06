@@ -1,0 +1,8 @@
+nand erase.chip
+
+nand write.raw.noverify 0x43200000 0x0      0x100
+nand write.raw.noverify 0x43200000 0x400000 0x100
+
+setenv bootargs root=/dev/ram0 rw earlyprintk
+setenv bootcmd bootz 0x42000000 0x43700000 0x43000000
+boot
