@@ -28,6 +28,13 @@ CHIP_ADDR=192.168.81.1
 CHIP_PORT=8080
 CHIP_URL="$CHIP_ADDR:$CHIP_PORT"
 
+# Why this? - The UBI/UBIFS driver in the CHIP 4.4 kernel has a bug
+# that can lead to filesystem corruption and data loss that is more
+# likely to show up if all available PEB in an UBI volume are used for
+# data. By reserving a certain percentage (10-15%) of the
+# PEB thesystem is way more reliable.
+NAND_SEC_PERCENT=12
+
 function deepfry-clone() {
 
     case "$1" in
@@ -45,7 +52,6 @@ function deepfry-clone() {
     IMAGES="$(realpath $IMAGES)"
 
     TMPDIR="$(mktemp -d ${SCRIPT_NAME}.XXXXXX)"
-#    TMPDIR=deepfry.XwaLqT
     
     echo "Downloadig U-Boot and Linux initrd image"
     sunxi-fel -p uboot $IMAGES/u-boot-sunxi-with-spl.bin \
@@ -77,8 +83,25 @@ function deepfry-clone() {
     curl -X POST --data "cmd=/usr/sbin/nanddump -a /dev/mtd3" ${CHIP_URL}/run >${TMPDIR}/mtd3
     
     sleep 1
+
+    echo "Attach UBI volume..."
+    curl -X POST --data "cmd=/usr/sbin/ubiattach -m4"  ${CHIP_URL}/run
+
+    echo "Create mount point..."
+    curl -X POST --data "cmd=/bin/mkdir -p /rootfs"  ${CHIP_URL}/run
+
+    echo "Mount UBIFS..."
+    curl -X POST --data "cmd=/bin/mount -t ubifs /dev/ubi0_0 /rootfs"  ${CHIP_URL}/run
+
     echo "Downloading rootfs..."
     curl ${CHIP_URL}/backup >${TMPDIR}/rootfs.tar
+
+    echo "Unmount UBIFS..."
+    curl -X POST --data "cmd=/bin/umount /rootfs"  ${CHIP_URL}/run
+
+    echo "Dettach UBI volume..."
+    curl -X POST --data "cmd=/usr/sbin/ubidetach -m4"  ${CHIP_URL}/run
+
 
     NAND_OOB_SIZE="$(cat $TMPDIR/info.json |jq '.[].OobSize'|head -n1)"
     echo "TODO: find better solution here - what about NAND on CHIP PRO?"
@@ -109,6 +132,45 @@ function deepfry-clone() {
     rm -rf "${TMPDIR}"
 }
 
+function create_ubi() {
+    VOL_SIZE="$((NAND_SIZE - ((NAND_SIZE * NAND_SEC_PERCENT) / 100)))"
+
+    cat >"${TMPDIR}"/ubi.cfg <<EOF
+[rootfs]
+mode=ubi
+vol_id=0
+vol_size=${VOL_SIZE}
+vol_type=dynamic
+vol_name=rootfs
+vol_alignment=1
+EOF
+    curl -T "${TMPDIR}/ubi.cfg" ${CHIP_URL}/file/tmp/ubi.cfg
+
+    echo "Run ubinize..."
+    curl -X POST --data "cmd=/usr/sbin/ubinize -o /tmp/ubi.bin -p 0x${NAND_ERASE_SIZE_HEX} -m 0x${NAND_WRITE_SIZE_HEX} -s 0x${NAND_SUBPAGE_SIZE_HEX} -M dist3 /tmp/ubi.cfg" ${CHIP_URL}/run
+
+    echo "Run flash_erase..."
+    curl -X POST --data "cmd=/usr/sbin/flash_erase /dev/mtd4 0 ${NAND_BLOCKS}" ${CHIP_URL}/run
+
+    echo "Run nand_write..."
+    curl -X POST --data "cmd=/usr/sbin/nandwrite -m -p /dev/mtd4 /tmp/ubi.bin" ${CHIP_URL}/run
+}
+
+function deepfry-boot() {
+    IMAGES=buildroot/output/images
+    IMAGES="$(realpath $IMAGES)"
+
+    sunxi-fel -p uboot   $IMAGES/u-boot-sunxi-with-spl.bin \
+        write 0x43300000 $IMAGES/rootfs.cpio.uboot \
+        write 0x43000000 $IMAGES/sun5i-r8-chip.dtb \
+        write 0x42000000 $IMAGES/zImage \
+        write 0x43100000 $IMAGES/boot.scr.bin 
+
+    echo -n "waiting for network device to show up..."
+    while ! ping -c 1 -w 1 ${CHIP_ADDR} >/dev/null; do echo -n "."; done
+    echo "done"
+}
+
 function deepfry-flash() {
     case "$1" in
         "" | "-h" | "--help")
@@ -126,13 +188,11 @@ function deepfry-flash() {
     IMAGES=buildroot/output/images
     IMAGES="$(realpath $IMAGES)"
 
-    TMPDIR="$(mktemp -d ${SCRIPT_NAME}.XXXXXX)"
+    TMPDIR="$(mktemp -d /tmp/${SCRIPT_NAME}.XXXXXX)"
     TMPDIR="$(realpath ${TMPDIR})"
     pushd "${TMPDIR}" && \
-    unzip "${FILENAME}" && \
+    unzip "${FILENAME}"
  
-    #TMPDIR=deepfry.XwaLqT
-
     sunxi-fel -p uboot   $IMAGES/u-boot-sunxi-with-spl.bin \
         write 0x43300000 $IMAGES/rootfs.cpio.uboot \
         write 0x43000000 $IMAGES/sun5i-r8-chip.dtb \
@@ -144,9 +204,15 @@ function deepfry-flash() {
     echo "done"
 
     sleep 1
-    NAND_OOB_SIZE="$(curl ${CHIP_URL}/info |jq '.[].OobSize'|head -n1)"
+    NAND_SIZE="$(curl ${CHIP_URL}/info |jq '.[] | select( .Path == "/dev/mtd4" ) | .Size')"
+    NAND_ERASE_SIZE="$(curl ${CHIP_URL}/info |jq '.[].EraseSize'|head -n1)"
+    NAND_BLOCKS="$((NAND_SIZE / NAND_ERASE_SIZE))"
+    NAND_OOB_SIZE_HEX="$(printf '%x' $(curl ${CHIP_URL}/info |jq '.[].OobSize'|head -n1) )"
+    NAND_ERASE_SIZE_HEX="$(printf '%x' $(curl ${CHIP_URL}/info |jq '.[].EraseSize'|head -n1) )"
+    NAND_SUBPAGE_SIZE_HEX="$(printf '%x' $(curl ${CHIP_URL}/info |jq '.[].SubPageSize'|head -n1) )"
+    NAND_WRITE_SIZE_HEX="$(printf '%x' $(curl ${CHIP_URL}/info |jq '.[].WriteSize'|head -n1) )"
     echo "TODO: find better solution here - what about NAND on CHIP PRO?"
-    if [ "${NAND_OOB_SIZE}" == "1664" ]; then
+    if [ "${NAND_OOB_SIZE}" == "680" ]; then
         RAW_NAND_TYPE=RAW_NAND_HYNIX
     else
         RAW_NAND_TYPE=RAW_NAND_TOSHIBA
@@ -174,7 +240,26 @@ function deepfry-flash() {
                     curl -X POST --data "cmd=/usr/sbin/nandwrite ${dest} /tmp/${file}" ${CHIP_URL}/run
                     ;;
                 'UBIFS_TAR')
+                    create_ubi
+
+                    echo "Attach UBI volume..."
+                    curl -X POST --data "cmd=/usr/sbin/ubiattach -m4"  ${CHIP_URL}/run
+
+                    echo "Create mount point..."
+                    curl -X POST --data "cmd=/bin/mkdir -p /rootfs"  ${CHIP_URL}/run
+
+                    echo "Mount UBIFS..."
+                    curl -X POST --data "cmd=/bin/mount -t ubifs /dev/ubi0_0 /rootfs"  ${CHIP_URL}/run
+
+                    echo "Untar rootfs"
                     curl -T "${TMPDIR}/${file}" ${CHIP_URL}/restore
+
+                    echo "Unmount UBIFS..."
+                    curl -X POST --data "cmd=/bin/umount /rootfs"  ${CHIP_URL}/run
+
+                    echo "Dettach UBI volume..."
+                    curl -X POST --data "cmd=/usr/sbin/ubidetach -m4"  ${CHIP_URL}/run
+
                     ;;
                 *)
                     echo "unknown type: $type"
@@ -183,31 +268,7 @@ function deepfry-flash() {
     done
 
     popd
-
-#    echo "-- Upload SPL --"
-#    echo "Write SPL to /dev/mtd0"
-#    curl -T spl_mtd0 ${CHIP_URL}/file/tmp/spl_mtd0
-#    curl -X POST --data "cmd=/usr/sbin/flash_erase /dev/mtd0 0 1" ${CHIP_URL}/run
-#    curl -X POST --data "cmd=/usr/sbin/nandwrite -o -n /dev/mtd0 /tmp/spl_mtd0" ${CHIP_URL}/run
-#    echo "Write SPL to /dev/mtd1"
-#    curl -T spl_mtd1 ${CHIP_URL}/file/tmp/spl_mtd1
-#    curl -X POST --data "cmd=/usr/sbin/flash_erase /dev/mtd1 0 1" ${CHIP_URL}/run
-#    curl -X POST --data "cmd=/usr/sbin/nandwrite -o -n /dev/mtd1 /tmp/spl_mtd1" ${CHIP_URL}/run
-#
-#    echo "-- Upload U-Boot --"
-#    curl -T uboot_mtd2 ${CHIP_URL}/file/tmp/mtd2
-#    echo "Write U-Boot to /dev/mtd2"
-#    curl -X POST --data "cmd=/usr/sbin/flash_erase /dev/mtd2 0 1" ${CHIP_URL}/run
-#    curl -X POST --data "cmd=/usr/sbin/nandwrite /dev/mtd2 /tmp/mtd2" ${CHIP_URL}/run
-#
-#    echo "-- Upload U-Boot Environment --"
-#    curl -T uboot_env_mtd3 ${CHIP_URL}/file/tmp/mtd3
-#    echo "Write U-Boot Environment to /dev/mtd3"
-#    curl -X POST --data "cmd=/usr/sbin/flash_erase /dev/mtd3 0 1" ${CHIP_URL}/run
-#    curl -X POST --data "cmd=/usr/sbin/nandwrite /dev/mtd3 /tmp/mtd3" ${CHIP_URL}/run
-#
-#    echo "writing Rootfs"
-#    curl -T rootfs.tar ${CHIP_URL}/restore
+    rm -rf "${TMPDIR}"
 }
 
 function deepfry-help() {
