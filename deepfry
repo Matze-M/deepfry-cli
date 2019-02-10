@@ -212,7 +212,7 @@ function deepfry-flash() {
     NAND_SUBPAGE_SIZE_HEX="$(printf '%x' $(curl ${CHIP_URL}/info |jq '.[].SubPageSize'|head -n1) )"
     NAND_WRITE_SIZE_HEX="$(printf '%x' $(curl ${CHIP_URL}/info |jq '.[].WriteSize'|head -n1) )"
     echo "TODO: find better solution here - what about NAND on CHIP PRO?"
-    if [ "${NAND_OOB_SIZE}" == "680" ]; then
+    if [ "${NAND_OOB_SIZE_HEX}" == "680" ]; then
         RAW_NAND_TYPE=RAW_NAND_HYNIX
     else
         RAW_NAND_TYPE=RAW_NAND_TOSHIBA
