@@ -39,7 +39,9 @@ IMAGES=buildroot/output/images
 IMAGES="$(realpath $IMAGES)"
 
 function deepfry-boot() {
-    sunxi-fel -p uboot   $IMAGES/u-boot-sunxi-with-spl.bin \
+    felopt=""
+    [ ! -z "$(sunxi-fel 2>/dev/null |grep progress)" ] felopt=-p
+    sunxi-fel $felopt uboot $IMAGES/u-boot-sunxi-with-spl.bin \
         write 0x43300000 $IMAGES/rootfs.cpio.uboot \
         write 0x43000000 $IMAGES/sun5i-r8-chip.dtb \
         write 0x42000000 $IMAGES/zImage \
