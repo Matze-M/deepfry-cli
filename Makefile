@@ -1,6 +1,6 @@
-export OUTPUT_DIR=$(PWD)/buildroot/output
-export BR_DIR=$(PWD)/buildroot
-export BR2_EXTERNAL=$(PWD)/buildroot_external
+export OUTPUT_DIR=$(CURDIR)/buildroot/output
+export BR_DIR=$(CURDIR)/buildroot
+export BR2_EXTERNAL=$(CURDIR)/buildroot_external
 
 %_defconfig:
 	@$(DOCKER) make -C $(BR_DIR) O=$(OUTPUT_DIR) $@
