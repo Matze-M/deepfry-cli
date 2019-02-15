@@ -1,0 +1,29 @@
+image: docker:latest
+
+services:
+  - docker:dind
+
+stages:
+  - build
+
+variables:
+  BUILD_CONTAINER: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  GIT_SUBMODULE_STRATEGY: recursive 
+
+before_script:
+  - docker login -u gitlab-ci-token -p $CI_BUILD_TOKEN $CI_REGISTRY
+  - echo "CI_REGISTRY=$CI_REGISTRY"
+  - echo "CI_REGISTRY_IMAGE=$CI_REGISTRY_IMAGE"
+  - echo "BUILD_CONTAINER=$BUILD_CONTAINER"
+
+build:
+  stage: build
+  script:
+    - docker pull $BUILD_CONTAINER || echo Docker image does not exist
+    - ls buildroot/support/docker
+    - docker build --cache-from $BUILD_CONTAINER -t $BUILD_CONTAINER buildroot/support/docker
+    - docker run --rm -v $PWD:/work -w /work $BUILD_CONTAINER make chip_defconfig
+    - docker run --rm -v $PWD:/work -w /work $BUILD_CONTAINER make all
+    - ls -ltr buildroot/output/images
+    - docker push $BUILD_CONTAINER
+
