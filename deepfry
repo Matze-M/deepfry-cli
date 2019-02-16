@@ -38,6 +38,18 @@ NAND_SEC_PERCENT=12
 IMAGES=buildroot/output/images
 IMAGES="$(realpath $IMAGES)"
 
+function require() {
+  [[ -z "$1" ]] && return
+
+  if [[ -z "$(which $1)" ]]; then
+    echo -e "\nERROR: Cannot find $1 in PATH - please install.\n"
+
+    [[ ! -z "$2" ]] && echo -e "$2\n"
+
+    exit 1
+  fi
+}
+
 function deepfry-boot() {
     felopt=""
     [ ! -z "$(sunxi-fel 2>/dev/null |grep progress)" ] felopt=-p
@@ -255,6 +267,16 @@ function deepfry-help() {
         | grep -e "^#%" \
         | sed -e "s/^#% //g" -e "s/\${SCRIPT_NAME}/${SCRIPT_NAME}/g";
 }
+
+require sunxi-fel
+require grep
+require sed
+require jq
+require curl
+require head
+require zip
+require unzip
+require ping
 
 cmd=$1
 case $cmd in
