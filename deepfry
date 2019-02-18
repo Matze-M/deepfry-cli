@@ -79,7 +79,7 @@ function deepfry-clone() {
             ;;
     esac
 
-    TMPDIR="$(mktemp -d ${SCRIPT_NAME}.XXXXXX)"
+    TMPDIR="$(mktemp -d /tmp/${SCRIPT_NAME}.XXXXXX)"
     
     deepfry-boot
 
@@ -163,7 +163,7 @@ function deepfry-image() {
             ;;
     esac
 
-    TMPDIR="$(mktemp -d ${SCRIPT_NAME}.XXXXXX)"
+    TMPDIR="$(mktemp -d /tmp/${SCRIPT_NAME}.XXXXXX)"
 
     deepfry-boot
 
