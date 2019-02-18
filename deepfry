@@ -54,7 +54,7 @@ function require() {
 
 function deepfry-boot() {
     felopt=""
-    [ ! -z "$(sunxi-fel 2>/dev/null |grep progress)" ] felopt=-p
+    [[ ! -z "$(sunxi-fel 2>/dev/null |grep progress)" ]] && felopt=-p
     sunxi-fel $felopt uboot $IMAGES/u-boot-sunxi-with-spl.bin \
         write 0x43300000 $IMAGES/rootfs.cpio.uboot \
         write 0x43000000 $IMAGES/sun5i-r8-chip.dtb \
