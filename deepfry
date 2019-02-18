@@ -24,6 +24,10 @@ SCRIPT_HEADER_SIZE=$( head -200 ${0} \
 SCRIPT_NAME="$(basename ${BASH_SOURCE[0]})"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+IMAGES=${SCRIPT_DIR}/buildroot/output/images
+[[ "${SCRIPT_DIR##*/}" == "bin" ]]  && export IMAGES=${SCRIPT_DIR%bin}lib/deepfry
+IMAGES="$(realpath $IMAGES)"
+
 CHIP_ADDR=192.168.81.1
 CHIP_PORT=8080
 CHIP_URL="$CHIP_ADDR:$CHIP_PORT"
@@ -34,9 +38,6 @@ CHIP_URL="$CHIP_ADDR:$CHIP_PORT"
 # data. By reserving a certain percentage (10-15%) of the
 # PEB the system is way more reliable.
 NAND_SEC_PERCENT=12
-
-IMAGES=buildroot/output/images
-IMAGES="$(realpath $IMAGES)"
 
 function require() {
   [[ -z "$1" ]] && return
