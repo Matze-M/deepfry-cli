@@ -256,9 +256,6 @@ function deepfry-flash() {
             ;;
     esac
 
-    set -x
-    echo "FILENAME=$FILENAME"
-
     TMPDIR="$(mktemp -d /tmp/${SCRIPT_NAME}.XXXXXX)"
     TMPDIR="$(realpath ${TMPDIR})"
     pushd "${TMPDIR}" && \
