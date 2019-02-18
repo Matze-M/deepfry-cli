@@ -11,8 +11,9 @@
 #%      -h, --help      show this help
 #% 
 #% COMMANDS
-#%      clone           clone .fry image
+#%      clone           create 1:1 copy (including bootloaders )
 #%      flash           flash .fry image
+#%      image           create multi-NAND image
 #%      help            show this help
 #% 
 #-----------------------------------------------------------------------
@@ -142,6 +143,76 @@ function deepfry-clone() {
     echo -e "{\n\"destination\": \"/dev/mtd3\",\n\"file\": \"mtd3\",\n\"type\": \"NAND\"\n},\n" >>${TMPDIR}/manifest.json
     echo -e "{\n\"destination\": \"/dev/ubi0_0\",\n\"file\": \"rootfs.tar\",\n\"type\": \"UBIFS_TAR\"\n}\n" >>${TMPDIR}/manifest.json
     echo -e "]\n" >>${TMPDIR}/manifest.json
+
+    echo "-- Writing .fry file --"
+    time zip -2 -j "${FILENAME}" "${TMPDIR}"/*
+
+    rm -rf "${TMPDIR}"
+}
+
+function deepfry-image() {
+
+    case "$1" in
+        "" | "-h" | "--help")
+            echo "USAGE"
+            echo "    ${SCRIPT_NAME} image <FILENAME>"
+            exit 1
+            ;;
+        *)
+            FILENAME=$1
+            ;;
+    esac
+
+    TMPDIR="$(mktemp -d ${SCRIPT_NAME}.XXXXXX)"
+
+    deepfry-boot
+
+    sleep 1
+    curl ${CHIP_URL}/info >${TMPDIR}/info.json
+
+    echo "Copy SPL from ${IMAGES}..."
+    cp -va ${IMAGES}/spl-*mlc.bin ${TMPDIR}/
+
+    echo "-- Download U-Boot --"
+    echo "Read U-Boot from /dev/mtd2"
+    curl -X POST --data "cmd=/usr/sbin/nanddump -a /dev/mtd2" ${CHIP_URL}/run >${TMPDIR}/mtd2
+
+    echo "-- Download U-Boot Environment --"
+    echo "Read U-Boot Environment from /dev/mtd3"
+    curl -X POST --data "cmd=/usr/sbin/nanddump -a /dev/mtd3" ${CHIP_URL}/run >${TMPDIR}/mtd3
+
+    sleep 1
+
+    echo "Attach UBI volume..."
+    curl -X POST --data "cmd=/usr/sbin/ubiattach -m4"  ${CHIP_URL}/run
+
+    echo "Create mount point..."
+    curl -X POST --data "cmd=/bin/mkdir -p /rootfs"  ${CHIP_URL}/run
+
+    echo "Mount UBIFS..."
+    curl -X POST --data "cmd=/bin/mount -t ubifs /dev/ubi0_0 /rootfs"  ${CHIP_URL}/run
+
+    echo "Downloading rootfs..."
+    curl ${CHIP_URL}/backup >${TMPDIR}/rootfs.tar
+
+    echo "Unmount UBIFS..."
+    curl -X POST --data "cmd=/bin/umount /rootfs"  ${CHIP_URL}/run
+
+    echo "Dettach UBI volume..."
+    curl -X POST --data "cmd=/usr/sbin/ubidetach -m4"  ${CHIP_URL}/run
+
+
+    echo -e "[\n" >${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd0\",\n\"file\": \"spl-hynix-mlc.bin\",\n\"type\": \"RAW_NAND_HYNIX\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd1\",\n\"file\": \"spl-hynix-mlc.bin\",\n\"type\": \"RAW_NAND_HYNIX\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd0\",\n\"file\": \"spl-toshiba-mlc.bin\",\n\"type\": \"RAW_NAND_TOSHIBA\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd1\",\n\"file\": \"spl-toshiba-mlc.bin\",\n\"type\": \"RAW_NAND_TOSHIBA\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd2\",\n\"file\": \"mtd2\",\n\"type\": \"NAND\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/mtd3\",\n\"file\": \"mtd3\",\n\"type\": \"NAND\"\n},\n" >>${TMPDIR}/manifest.json
+    echo -e "{\n\"destination\": \"/dev/ubi0_0\",\n\"file\": \"rootfs.tar\",\n\"type\": \"UBIFS_TAR\"\n}\n" >>${TMPDIR}/manifest.json
+    echo -e "]\n" >>${TMPDIR}/manifest.json
+
+    rm -f $TMPDIR/info.json
 
     echo "-- Writing .fry file --"
     time zip -2 -j "${FILENAME}" "${TMPDIR}"/*
