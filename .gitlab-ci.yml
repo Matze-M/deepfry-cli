@@ -24,6 +24,8 @@ build:
     - docker build --cache-from $BUILD_CONTAINER -t $BUILD_CONTAINER buildroot/support/docker
     - docker run --rm -v $PWD:/work -w /work $BUILD_CONTAINER make chip_defconfig
     - docker run --rm -v $PWD:/work -w /work $BUILD_CONTAINER make all
+    - docker run --rm -v $PWD:/work -w /work $BUILD_CONTAINER make deb
     - ls -ltr buildroot/output/images
+    - ls -ltr *.deb
     - docker push $BUILD_CONTAINER
 

@@ -1,0 +1,8 @@
+Package: deepfry-cli
+Version: ##VERSION##-1
+Architecture: all
+Depends: sunxi-tools, grep, sed, jq, curl, zip, unzip, iputils-ping, bash
+Maintainer: Alex Kaplan <kaplan2539@gmail.com>
+Description: Deepfry is a tool to flash NAND images onto the $9 CHIP.
+ Deepfry allows to flash image onto the NAND of CHIP the $9 computer.
+ It is also possible to read out the contents of NAND and create images.
