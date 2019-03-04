@@ -9,7 +9,8 @@ CDB_SITE_METHOD = git
 CDB_GIT_BRANCH = unstable
 CDB_GIT_COMMIT = $(shell git ls-remote $(CDB_SITE) $(CDB_GIT_BRANCH) | cut -f1)
 CDB_VERSION = $(CDB_GIT_BRANCH)
-
+CDB_LICENSE = GPL-2.0+
+CDB_LICENSE_FILES = LICENSE
 CDB_DEPENDENCIES = host-go
 
 ifeq ($(BR2_arm),y)
