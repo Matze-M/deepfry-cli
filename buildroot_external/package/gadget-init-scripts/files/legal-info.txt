@@ -1,0 +1,3 @@
+The gadget-init scripts are part of Gadget OS (GPLv3+) and Copyright (C) 2016-2018 Next Thing Co.
+The source code has not been modified, other than adding license information to the Buildroot build script.
+The /etc/init.d/S34_usb_gadget is from forked from David Lechner's LEGO MINDSTORMS EV3 gadget script (GPLv2+), Copyright (C) 2015,2017 David Lechner <david@lechnology.com>.
