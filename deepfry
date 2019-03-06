@@ -3,6 +3,22 @@
 #-----------------------------------------------------------------------
 #  HEADER
 #-----------------------------------------------------------------------
+## This script is a tool to create and write NAND images for the $9 CHIP.
+## Copyright (C) 2018, 2019 Alexander Kaplan
+#$ 
+#$ This program is free software: you can redistribute it and/or modify
+#$ it under the terms of the GNU General Public License as published by
+#$ the Free Software Foundation, either version 3 of the License, or
+#$ (at your option) any later version.
+#$ 
+#$ This program is distributed in the hope that it will be useful,
+#$ but WITHOUT ANY WARRANTY; without even the implied warranty of
+#$ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#$ GNU General Public License for more details.
+#$ 
+#$ You should have received a copy of the GNU General Public License
+#$ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#$ 
 #% 
 #% USAGE
 #%      ${SCRIPT_NAME} [OPTIONS] COMMAND 
@@ -15,6 +31,7 @@
 #%      flash           flash .fry image
 #%      image           create multi-NAND image
 #%      help            show this help
+#%      license         show license information
 #% 
 #-----------------------------------------------------------------------
 #  END OF HEADER
@@ -59,7 +76,7 @@ function deepfry-boot() {
         write 0x43300000 $IMAGES/rootfs.cpio.uboot \
         write 0x43000000 $IMAGES/sun5i-r8-chip.dtb \
         write 0x42000000 $IMAGES/zImage \
-        write 0x43100000 $IMAGES/boot.scr.bin 
+        write 0x43100000 $IMAGES/boot.scr.bin || exit $?
 
     echo -n "waiting for network device to show up..."
     while ! ping -c 1 -w 1 ${CHIP_ADDR} >/dev/null; do echo -n "."; done
@@ -78,6 +95,14 @@ function deepfry-clone() {
             FILENAME=$1
             ;;
     esac
+
+    echo "WARNING: This will create an exact copy of your rootfs including
+         files you are not supposed to share. E.g. wifi passwords,
+         private client and server ssh keys, your bash history etc.
+         Be careful when sharing .fry files!
+         
+         Continue? [Y/n] " 
+    read cont && [[ "${cont}" != "Y" ]] && exit 0
 
     TMPDIR="$(mktemp -d /tmp/${SCRIPT_NAME}.XXXXXX)"
     
@@ -333,8 +358,15 @@ function deepfry-flash() {
 
 function deepfry-help() {
     head -${SCRIPT_HEADER_SIZE:-99} ${0} \
-        | grep -e "^#%" \
-        | sed -e "s/^#% //g" -e "s/\${SCRIPT_NAME}/${SCRIPT_NAME}/g";
+        | grep -e "^#[%,#]" \
+        | sed -e "s/^#[%,#] //g" -e "s/\${SCRIPT_NAME}/${SCRIPT_NAME}/g";
+}
+
+function deepfry-license() {
+    head -${SCRIPT_HEADER_SIZE:-99} ${0} \
+        | grep -e "^#[$,#]" \
+        | sed -e "s/^#[$,#] //g" -e "s/\${SCRIPT_NAME}/${SCRIPT_NAME}/g";
+    cat "${IMAGES}/legal.txt"
 }
 
 require sunxi-fel

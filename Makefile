@@ -6,6 +6,7 @@ export VERSION=$(shell cat $(CURDIR)/version)
 PREFIX ?= /usr/local
 IMAGES = u-boot-sunxi-with-spl.bin rootfs.cpio.uboot sun5i-r8-chip.dtb zImage boot.scr.bin spl-hynix-mlc.bin spl-toshiba-mlc.bin
 LIB_DEST_DIR=$(PREFIX)/lib/deepfry
+LEGAL_DEST_DIR=$(PREFIX)/share/doc/deepfry
 
 %_defconfig:
 	@$(DOCKER) make -C $(BR_DIR) O=$(OUTPUT_DIR) $@
@@ -23,6 +24,9 @@ install:
 	$(foreach img,$(IMAGES), \
 		install -m 0755 $(OUTPUT_DIR)/images/$(img) ${LIB_DEST_DIR}/$(img); \
 	)
+	mkdir -p $(LEGAL_DEST_DIR)
+	install -m 0644 legal.txt $(LEGAL_DEST_DIR)/legal.txt
+	install -m 0644 legal.txt $(LIB_DEST_DIR)/legal.txt
 
 uninstall:
 	rm $(PREFIX)/bin/deepfry
@@ -35,7 +39,7 @@ deb:
 	$(eval DST := $(TMP)/deepfry-cli)
 	mkdir -p $(DST)/DEBIAN
 	sed -e 's/##VERSION##/'$(VERSION)'/g' DEBIAN/control >$(DST)/DEBIAN/control
-	PREFIX=$(DST) make install
+	PREFIX=$(DST)/usr make install
 	dpkg-deb --build $(DST)
 	cp $(DST).deb $(CURDIR)
 	rm -rf $(TMP)
